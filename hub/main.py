@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from typing import Dict, List
 import uuid
 
-from models import NodeRegistration, TaskCreate, TaskResult, NodeBalance
+from models import NodeRegistration, TaskCreate, TaskResult, NodeBalance, TaskBid
 
 app = FastAPI(title="Chronos Protocol L1 Hub", description="The Time Exchange Clearinghouse", version="0.1.1")
 
@@ -39,15 +39,18 @@ async def submit_task(task: TaskCreate):
         "consumer_id": task.consumer_id,
         "payload": task.payload,
         "bounty": task.bounty,
-        "status": "pending",
-        "target_node": task.target_node
+        "status": "bidding",
+        "target_node": task.target_node,
+        "model_requirement": task.model_requirement
     }
     active_tasks[task_id] = task_data
     
-    # Target specific node if requested (Direct Message)
+    # Target specific node if requested (Direct Message skips bidding)
     if task.target_node:
         if task.target_node in connected_nodes:
             try:
+                task_data["status"] = "assigned"
+                task_data["provider_id"] = task.target_node
                 await connected_nodes[task.target_node].send_json({"event": "new_task", "data": task_data})
                 return {"status": "success", "task_id": task_id, "routed_to": task.target_node}
             except:
@@ -55,15 +58,42 @@ async def submit_task(task: TaskCreate):
         else:
             return {"status": "error", "detail": "Target node not currently connected to Hub"}
 
-    # Otherwise, Broadcast to all connected nodes EXCEPT the consumer
+    # Phase 2: Broadcast RFC (Request For Compute) to all connected nodes EXCEPT the consumer
+    rfc_data = {
+        "id": task_id,
+        "consumer_id": task.consumer_id,
+        "bounty": task.bounty,
+        "model_requirement": task.model_requirement
+    }
     for node_id, ws in list(connected_nodes.items()):
         if node_id != task.consumer_id:
             try:
-                await ws.send_json({"event": "new_task", "data": task_data})
+                await ws.send_json({"event": "rfc", "data": rfc_data})
             except:
                 pass
                 
     return {"status": "success", "task_id": task_id}
+
+@app.post("/tasks/bid")
+async def place_bid(bid: TaskBid):
+    task = active_tasks.get(bid.task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found or already completed")
+        
+    if task["status"] != "bidding":
+        return {"status": "rejected", "detail": "Task already assigned to another node"}
+        
+    # Phase 2 Fast Auction: Accept the first valid bid
+    task["status"] = "assigned"
+    task["provider_id"] = bid.provider_id
+    
+    # Return the full payload to the winner
+    return {
+        "status": "accepted",
+        "payload": task["payload"],
+        "consumer_id": task["consumer_id"],
+        "model_requirement": task.get("model_requirement")
+    }
 
 @app.post("/tasks/complete")
 async def complete_task(result: TaskResult):

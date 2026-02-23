@@ -51,6 +51,8 @@ class MEPMiner:
                         
                         if data["event"] == "new_task":
                             await self.process_task(data["data"])
+                        elif data["event"] == "rfc":
+                            await self.handle_rfc(data["data"])
                             
                     except asyncio.TimeoutError:
                         continue  # Keep connection alive
@@ -61,6 +63,44 @@ class MEPMiner:
         except Exception as e:
             print(f"[MEP Miner {self.node_id}] WebSocket error: {e}")
     
+    async def handle_rfc(self, rfc_data: dict):
+        """Phase 2: Evaluate Request For Compute and submit Bid."""
+        task_id = rfc_data["id"]
+        bounty = rfc_data["bounty"]
+        model = rfc_data.get("model_requirement")
+        
+        # Simple evaluation logic
+        if bounty < 0.1 and bounty != 0.0:  # Allow 0 for testing DM
+            print(f"[MEP Miner {self.node_id}] Ignored RFC {task_id[:8]} (Bounty too low: {bounty})")
+            return
+            
+        print(f"[MEP Miner {self.node_id}] Received RFC {task_id[:8]} for {bounty:.6f} SECONDS. Placing bid...")
+        
+        # Place bid
+        try:
+            resp = requests.post(f"{HUB_URL}/tasks/bid", json={
+                "task_id": task_id,
+                "provider_id": self.node_id
+            })
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                if data["status"] == "accepted":
+                    print(f"[MEP Miner {self.node_id}] 🏁 BID WON for task {task_id[:8]}! Processing payload...")
+                    
+                    # Reconstruct task_data to pass to process_task
+                    task_data = {
+                        "id": task_id,
+                        "payload": data["payload"],
+                        "bounty": bounty,
+                        "consumer_id": data["consumer_id"]
+                    }
+                    await self.process_task(task_data)
+                else:
+                    print(f"[MEP Miner {self.node_id}] Bid rejected (too slow): {data.get('detail', '')}")
+        except Exception as e:
+            print(f"[MEP Miner {self.node_id}] Error placing bid: {e}")
+
     async def process_task(self, task_data: dict):
         """Process a task and earn SECONDS."""
         task_id = task_data["id"]

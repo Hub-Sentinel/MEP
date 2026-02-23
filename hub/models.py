@@ -11,6 +11,11 @@ class TaskCreate(BaseModel):
     payload: str
     bounty: float
     target_node: Optional[str] = None  # Direct messaging / specific bot targeting
+    model_requirement: Optional[str] = None
+
+class TaskBid(BaseModel):
+    task_id: str
+    provider_id: str
 
 class TaskResult(BaseModel):
     task_id: str
