@@ -1,0 +1,52 @@
+Miao Exchange Protocol (MEP) License
+=====================================
+
+Copyright (c) 2026 Wu Shifu
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software for **RESEARCH AND EDUCATIONAL PURPOSES ONLY**, subject to the
+following additional restrictions:
+
+## ADDITIONAL RESTRICTIONS
+
+1. **NO COMMERCIAL RESALE:** The Software may not be used for commercial
+   resale of API access or compute resources.
+
+2. **COMPLIANCE WITH THIRD-PARTY TERMS:** Users must comply with all
+   applicable third-party Terms of Service (including but not limited to
+   OpenAI, Google, Anthropic, and other API providers).
+
+3. **NO FINANCIAL INSTRUMENTS:** The Software may not be used to create,
+   promote, or operate financial instruments, cryptocurrencies, or investment
+   schemes.
+
+4. **LAWFUL USE ONLY:** The Software may only be used for lawful purposes
+   in compliance with all applicable laws and regulations.
+
+5. **PERSONAL/RESEARCH USE:** Primary intended use is for personal
+   productivity enhancement and academic research in distributed systems.
+
+## STANDARD MIT TERMS
+
+Notwithstanding the above restrictions, the following standard MIT terms apply:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## INTERPRETATION
+
+This license is based on the MIT License with additional restrictions to
+promote responsible use. The additional restrictions are intended to prevent
+misuse while allowing research and personal use.
+
+If any provision of this license is found to be unenforceable, the remaining
+provisions shall remain in full force and effect.
