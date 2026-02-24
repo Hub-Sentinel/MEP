@@ -28,11 +28,16 @@ async def get_balance(node_id: str):
 async def submit_task(task: TaskCreate):
     if task.consumer_id not in ledger:
         raise HTTPException(status_code=404, detail="Consumer node not found")
-    if ledger[task.consumer_id] < task.bounty:
-        raise HTTPException(status_code=400, detail="Insufficient SECONDS balance")
-
-    ledger[task.consumer_id] -= task.bounty
-    
+        
+    # If bounty is positive, consumer is PAYING. Check consumer balance.
+    if task.bounty > 0 and ledger[task.consumer_id] < task.bounty:
+        raise HTTPException(status_code=400, detail="Insufficient SECONDS balance to pay for task")
+        
+    # Note: If bounty is negative, consumer is SELLING data. We don't deduct here.
+    # We will deduct from the provider when they complete the task.
+    if task.bounty > 0:
+        ledger[task.consumer_id] -= task.bounty
+        
     task_id = str(uuid.uuid4())
     task_data = {
         "id": task_id,
@@ -104,8 +109,18 @@ async def complete_task(result: TaskResult):
     if result.provider_id not in ledger:
         ledger[result.provider_id] = 0.0
 
-    # Transfer SECONDS to provider
-    ledger[result.provider_id] += task["bounty"]
+    # Transfer SECONDS based on positive or negative bounty
+    bounty = task["bounty"]
+    if bounty >= 0:
+        # Standard Compute Market: Provider earns SECONDS
+        ledger[result.provider_id] += bounty
+    else:
+        # Data Market: Provider PAYS to receive this payload/task
+        cost = abs(bounty)
+        if ledger[result.provider_id] < cost:
+            raise HTTPException(status_code=400, detail="Provider lacks SECONDS to buy this data")
+        ledger[result.provider_id] -= cost
+        ledger[task["consumer_id"]] += cost # The sender earns SECONDS
     
     # Move task to completed
     task["status"] = "completed"

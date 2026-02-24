@@ -25,23 +25,23 @@ class MEPProvider:
         
     async def connect(self):
         """Connect to MEP Hub and start mining."""
-        print(f"[MEP Miner {self.node_id}] Starting...")
+        print(f"[MEP Provider {self.node_id}] Starting...")
         
         # Register with hub
         try:
             resp = requests.post(f"{HUB_URL}/register", json={"pubkey": self.node_id})
             data = resp.json()
             self.balance = data.get("balance", 0.0)
-            print(f"[MEP Miner {self.node_id}] Registered. Balance: {self.balance:.6f} SECONDS")
+            print(f"[MEP Provider {self.node_id}] Registered. Balance: {self.balance:.6f} SECONDS")
         except Exception as e:
-            print(f"[MEP Miner {self.node_id}] Registration failed: {e}")
+            print(f"[MEP Provider {self.node_id}] Registration failed: {e}")
             return
         
         # Connect to WebSocket
         uri = f"{WS_URL}/ws/{self.node_id}"
         try:
             async with websockets.connect(uri) as ws:
-                print(f"[MEP Miner {self.node_id}] Connected to MEP Hub")
+                print(f"[MEP Provider {self.node_id}] Connected to MEP Hub")
                 
                 # Listen for tasks
                 while self.is_mining:
@@ -57,11 +57,11 @@ class MEPProvider:
                     except asyncio.TimeoutError:
                         continue  # Keep connection alive
                     except websockets.exceptions.ConnectionClosed:
-                        print(f"[MEP Miner {self.node_id}] Connection closed")
+                        print(f"[MEP Provider {self.node_id}] Connection closed")
                         break
                         
         except Exception as e:
-            print(f"[MEP Miner {self.node_id}] WebSocket error: {e}")
+            print(f"[MEP Provider {self.node_id}] WebSocket error: {e}")
     
     async def handle_rfc(self, rfc_data: dict):
         """Phase 2: Evaluate Request For Compute and submit Bid."""
@@ -69,12 +69,13 @@ class MEPProvider:
         bounty = rfc_data["bounty"]
         model = rfc_data.get("model_requirement")
         
-        # Simple evaluation logic
-        if bounty < 0.1 and bounty != 0.0:  # Allow 0 for testing DM
-            print(f"[MEP Miner {self.node_id}] Ignored RFC {task_id[:8]} (Bounty too low: {bounty})")
+        # SAFETY SWITCH: Prevent purchasing data unless explicitly allowed
+        max_purchase_price = 0.0 # Set to e.g., -5.0 to buy premium data
+        if bounty < max_purchase_price:
+            print(f"[MEP Provider {self.node_id}] Ignored RFC {task_id[:8]} (Bounty {bounty} exceeds max purchase price)")
             return
             
-        print(f"[MEP Miner {self.node_id}] Received RFC {task_id[:8]} for {bounty:.6f} SECONDS. Placing bid...")
+        print(f"[MEP Provider {self.node_id}] Received RFC {task_id[:8]} for {bounty:.6f} SECONDS. Placing bid...")
         
         # Place bid
         try:
@@ -86,7 +87,7 @@ class MEPProvider:
             if resp.status_code == 200:
                 data = resp.json()
                 if data["status"] == "accepted":
-                    print(f"[MEP Miner {self.node_id}] 🏁 BID WON for task {task_id[:8]}! Processing payload...")
+                    print(f"[MEP Provider {self.node_id}] 🏁 BID WON for task {task_id[:8]}! Processing payload...")
                     
                     # Reconstruct task_data to pass to process_task
                     task_data = {
@@ -97,9 +98,9 @@ class MEPProvider:
                     }
                     await self.process_task(task_data)
                 else:
-                    print(f"[MEP Miner {self.node_id}] Bid rejected (too slow): {data.get('detail', '')}")
+                    print(f"[MEP Provider {self.node_id}] Bid rejected (too slow): {data.get('detail', '')}")
         except Exception as e:
-            print(f"[MEP Miner {self.node_id}] Error placing bid: {e}")
+            print(f"[MEP Provider {self.node_id}] Error placing bid: {e}")
 
     async def process_task(self, task_data: dict):
         """Process a task and earn SECONDS."""
@@ -108,7 +109,7 @@ class MEPProvider:
         bounty = task_data["bounty"]
         consumer_id = task_data["consumer_id"]
         
-        print(f"[MEP Miner {self.node_id}] Received task {task_id[:8]} for {bounty:.6f} SECONDS")
+        print(f"[MEP Provider {self.node_id}] Received task {task_id[:8]} for {bounty:.6f} SECONDS")
         print(f"  Payload: {payload[:50]}...")
         
         # Simulate processing (in real version, this would call local LLM API)
@@ -139,18 +140,18 @@ Would you like me to elaborate on any specific aspect?"""
             if resp.status_code == 200:
                 data = resp.json()
                 self.balance = data["new_balance"]
-                print(f"[MEP Miner {self.node_id}] Earned {bounty:.6f} SECONDS!")
+                print(f"[MEP Provider {self.node_id}] Earned {bounty:.6f} SECONDS!")
                 print(f"  New balance: {self.balance:.6f} SECONDS")
             else:
-                print(f"[MEP Miner {self.node_id}] Failed to submit: {resp.text}")
+                print(f"[MEP Provider {self.node_id}] Failed to submit: {resp.text}")
                 
         except Exception as e:
-            print(f"[MEP Miner {self.node_id}] Submission error: {e}")
+            print(f"[MEP Provider {self.node_id}] Submission error: {e}")
     
     def stop(self):
         """Stop mining."""
         self.is_mining = False
-        print(f"[MEP Miner {self.node_id}] Stopping...")
+        print(f"[MEP Provider {self.node_id}] Stopping...")
 
 async def main():
     # Create a miner with unique ID
