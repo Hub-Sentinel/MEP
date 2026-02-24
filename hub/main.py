@@ -3,6 +3,7 @@ from typing import Dict, List
 import uuid
 import db
 import auth
+from logger import log_event, log_audit, hub_logger
 
 from models import NodeRegistration, TaskCreate, TaskResult, NodeBalance, TaskBid
 
@@ -37,6 +38,10 @@ async def register_node(node: NodeRegistration):
     # Registration derives the Node ID from the provided Public Key PEM
     node_id = auth.derive_node_id(node.pubkey)
     balance = db.register_node(node_id, node.pubkey)
+    
+    log_event("node_registered", f"Node {node_id} registered with starting balance {balance}", node_id=node_id, starting_balance=balance)
+    log_audit("REGISTER", node_id, balance, balance, "START_BONUS")
+    
     return {"status": "success", "node_id": node_id, "balance": balance}
 
 @app.get("/balance/{node_id}")
@@ -67,7 +72,13 @@ async def submit_task(task: TaskCreate, authenticated_node: str = Depends(verify
     if task.bounty > 0:
         success = db.deduct_balance(task.consumer_id, task.bounty)
         if not success:
+            log_event("task_rejected", f"Node {task.consumer_id} lacks SECONDS to submit task", consumer_id=task.consumer_id, bounty=task.bounty)
             raise HTTPException(status_code=400, detail="Insufficient SECONDS balance")
+            
+        new_balance = db.get_balance(task.consumer_id)
+        log_audit("ESCROW", task.consumer_id, -task.bounty, new_balance, task_id)
+        
+    log_event("task_submitted", f"Task {task_id[:8]} broadcasted by {task.consumer_id} for {task.bounty}", consumer_id=task.consumer_id, task_id=task_id, bounty=task.bounty)
         
     task_id = str(uuid.uuid4())
     task_data = {
@@ -126,6 +137,8 @@ async def place_bid(bid: TaskBid, authenticated_node: str = Depends(verify_reque
     task["status"] = "assigned"
     task["provider_id"] = bid.provider_id
     
+    log_event("bid_accepted", f"Task {bid.task_id[:8]} assigned to {bid.provider_id}", task_id=bid.task_id, provider_id=bid.provider_id, bounty=task["bounty"])
+    
     # Return the full payload to the winner
     return {
         "status": "accepted",
@@ -152,15 +165,25 @@ async def complete_task(result: TaskResult, authenticated_node: str = Depends(ve
     if bounty >= 0:
         # Standard Compute Market: Provider earns SECONDS
         db.add_balance(result.provider_id, bounty)
+        new_balance = db.get_balance(result.provider_id)
+        log_audit("EARN_COMPUTE", result.provider_id, bounty, new_balance, result.task_id)
     else:
         # Data Market: Provider PAYS to receive this payload/task
         cost = abs(bounty)
         success = db.deduct_balance(result.provider_id, cost)
         if not success:
+            log_event("data_purchase_failed", f"Provider {result.provider_id} lacks SECONDS to buy {result.task_id}", task_id=result.task_id, provider_id=result.provider_id, cost=cost)
             raise HTTPException(status_code=400, detail="Provider lacks SECONDS to buy this data")
         
+        p_balance = db.get_balance(result.provider_id)
+        log_audit("BUY_DATA", result.provider_id, -cost, p_balance, result.task_id)
+        
         db.add_balance(task["consumer_id"], cost) # The sender earns SECONDS
+        c_balance = db.get_balance(task["consumer_id"])
+        log_audit("SELL_DATA", task["consumer_id"], cost, c_balance, result.task_id)
     
+    log_event("task_completed", f"Task {result.task_id[:8]} completed by {result.provider_id}", task_id=result.task_id, provider_id=result.provider_id, bounty=bounty)
+
     # Move task to completed
     task["status"] = "completed"
     task["provider_id"] = result.provider_id

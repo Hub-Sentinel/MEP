@@ -1,1 +1,2 @@
 \n*.db\n*.sqlite3
+/logs
