@@ -9,6 +9,8 @@ import json
 import requests
 import uuid
 import time
+import urllib.parse
+from identity import MEPIdentity
 
 HUB_URL = "http://localhost:8000"
 WS_URL = "ws://localhost:8000"
@@ -17,7 +19,8 @@ class RacingProvider:
     def __init__(self, name, location):
         self.name = name
         self.location = location
-        self.node_id = f"{name}-{uuid.uuid4().hex[:6]}"
+        self.identity = MEPIdentity(f"{name.replace(' ', '_')}_{uuid.uuid4().hex[:6]}.pem")
+        self.node_id = self.identity.node_id
         self.balance = 0
         self.won_race = False
         self.response_time = None
@@ -27,11 +30,14 @@ class RacingProvider:
         print(f"[{self.name} in {self.location}] Connecting to MEP Hub...")
         
         # Register
-        requests.post(f"{HUB_URL}/register", json={"pubkey": self.node_id})
+        requests.post(f"{HUB_URL}/register", json={"pubkey": self.identity.pub_pem})
         
         # Connect via WebSocket
         start_time = time.time()
-        async with websockets.connect(f"{WS_URL}/ws/{self.node_id}") as ws:
+        ts = str(int(time.time()))
+        sig = self.identity.sign(self.node_id, ts)
+        sig_safe = urllib.parse.quote(sig)
+        async with websockets.connect(f"{WS_URL}/ws/{self.node_id}?timestamp={ts}&signature={sig_safe}") as ws:
             print(f"[{self.name}] Connected. Waiting for task {task_id[:8]}...")
             
             try:
@@ -49,11 +55,14 @@ class RacingProvider:
                     
                     # Submit result
                     result = f"Processed by {self.name} from {self.location}. Task: {task_payload[:30]}..."
-                    resp = requests.post(f"{HUB_URL}/tasks/complete", json={
+                    payload_str = json.dumps({
                         "task_id": task_id,
                         "provider_id": self.node_id,
                         "result_payload": result
                     })
+                    headers = self.identity.get_auth_headers(payload_str)
+                    headers["Content-Type"] = "application/json"
+                    resp = requests.post(f"{HUB_URL}/tasks/complete", data=payload_str, headers=headers)
                     
                     if resp.status_code == 200:
                         self.won_race = True
@@ -73,8 +82,8 @@ async def run_race():
     print("=" * 60)
     
     # Register consumer
-    consumer_id = "race-test-consumer"
-    requests.post(f"{HUB_URL}/register", json={"pubkey": consumer_id})
+    consumer = MEPIdentity(f"race_consumer_{uuid.uuid4().hex[:6]}.pem")
+    requests.post(f"{HUB_URL}/register", json={"pubkey": consumer.pub_pem})
     
     # Create 4 providers in different "locations"
     providers = [
@@ -91,11 +100,14 @@ async def run_race():
     print(f"\n📤 Submitting task: {task_payload[:50]}...")
     print(f"   Bounty: {bounty} SECONDS")
     
-    resp = requests.post(f"{HUB_URL}/tasks/submit", json={
-        "consumer_id": consumer_id,
+    payload_str = json.dumps({
+        "consumer_id": consumer.node_id,
         "payload": task_payload,
         "bounty": bounty
     })
+    headers = consumer.get_auth_headers(payload_str)
+    headers["Content-Type"] = "application/json"
+    resp = requests.post(f"{HUB_URL}/tasks/submit", data=payload_str, headers=headers)
     
     task_data = resp.json()
     task_id = task_data["task_id"]
@@ -128,7 +140,7 @@ async def run_race():
         print("\n⚠️ No winner - task may have failed")
     
     # Check consumer balance
-    balance_resp = requests.get(f"{HUB_URL}/balance/{consumer_id}")
+    balance_resp = requests.get(f"{HUB_URL}/balance/{consumer.node_id}")
     consumer_balance = balance_resp.json()["balance_seconds"]
     print(f"\n💰 Consumer spent {bounty} SECONDS, new balance: {consumer_balance}")
     

@@ -3,27 +3,30 @@ import json
 import websockets
 import requests
 import uuid
-import sys
+import time
+import urllib.parse
 from reputation import ReputationManager
+from identity import MEPIdentity
 
 class ChronosNode:
     """
     Simulated Clawdbot Client (Both Consumer & Provider)
     """
-    def __init__(self, node_id: str, hub_url: str = "http://localhost:8000", ws_url: str = "ws://localhost:8000"):
-        self.node_id = node_id
+    def __init__(self, key_path: str, hub_url: str = "http://localhost:8000", ws_url: str = "ws://localhost:8000"):
+        self.identity = MEPIdentity(key_path)
+        self.node_id = self.identity.node_id
         self.hub_url = hub_url
         self.ws_url = ws_url
-        self.reputation = ReputationManager(storage_path=f"reputation_{node_id}.json")
+        self.reputation = ReputationManager(storage_path=f"reputation_{self.node_id}.json")
         self.is_sleeping = False
         
         # Track pending tasks we created (Consumer)
-        self.my_pending_tasks = {}
+        self.my_pending_tasks: dict[str, dict] = {}
 
     def register(self):
         """Register to get 10 SECONDS."""
         print(f"[Node {self.node_id}] Registering with Hub...")
-        resp = requests.post(f"{self.hub_url}/register", json={"pubkey": self.node_id, "alias": "test"})
+        resp = requests.post(f"{self.hub_url}/register", json={"pubkey": self.identity.pub_pem, "alias": "test"})
         data = resp.json()
         print(f"[Node {self.node_id}] Balance: {data['balance']}s")
 
@@ -35,8 +38,6 @@ class ChronosNode:
         task_id = task_data["id"]
         payload = task_data["payload"]
         bounty = task_data["bounty"]
-        consumer_id = task_data["consumer_id"]
-
         print(f"[Node {self.node_id}] Broadcast received: Task {task_id[:6]} for {bounty}s")
         
         # 1. Check L2 Reputation of Consumer (Don't work for bad nodes)
@@ -47,11 +48,14 @@ class ChronosNode:
         result = f"Hello from {self.node_id}. I processed your payload: {payload[:20]}..."
         
         # 3. Submit proof of work
-        resp = requests.post(f"{self.hub_url}/tasks/complete", json={
+        payload_str = json.dumps({
             "task_id": task_id,
             "provider_id": self.node_id,
             "result_payload": result
         })
+        headers = self.identity.get_auth_headers(payload_str)
+        headers["Content-Type"] = "application/json"
+        resp = requests.post(f"{self.hub_url}/tasks/complete", data=payload_str, headers=headers)
         if resp.status_code == 200:
             print(f"[Node {self.node_id}] Mined {bounty}s! New Balance: {resp.json()['new_balance']}s")
 
@@ -71,7 +75,10 @@ class ChronosNode:
 
     async def listen(self):
         """Persistent WebSocket connection."""
-        uri = f"{self.ws_url}/ws/{self.node_id}"
+        ts = str(int(time.time()))
+        sig = self.identity.sign(self.node_id, ts)
+        sig_safe = urllib.parse.quote(sig)
+        uri = f"{self.ws_url}/ws/{self.node_id}?timestamp={ts}&signature={sig_safe}"
         async with websockets.connect(uri) as ws:
             print(f"[Node {self.node_id}] Connected to Hub via WebSocket.")
             while True:
@@ -85,11 +92,14 @@ class ChronosNode:
 
     async def submit_task(self, payload: str, bounty: float):
         """As a Consumer, create a task and lock SECONDS."""
-        resp = requests.post(f"{self.hub_url}/tasks/submit", json={
+        payload_str = json.dumps({
             "consumer_id": self.node_id,
             "payload": payload,
             "bounty": bounty
         })
+        headers = self.identity.get_auth_headers(payload_str)
+        headers["Content-Type"] = "application/json"
+        resp = requests.post(f"{self.hub_url}/tasks/submit", data=payload_str, headers=headers)
         if resp.status_code == 200:
             task_id = resp.json()["task_id"]
             print(f"[Node {self.node_id} (Consumer)] Submitted Task {task_id[:6]} for {bounty}s")
@@ -98,11 +108,11 @@ class ChronosNode:
 
 async def run_demo():
     # Setup two nodes
-    usa_node = ChronosNode("usa_node")
+    usa_node = ChronosNode(f"usa_node_{uuid.uuid4().hex[:6]}.pem")
     usa_node.is_sleeping = False
     usa_node.register()
     
-    asia_node = ChronosNode("asia_node")
+    asia_node = ChronosNode(f"asia_node_{uuid.uuid4().hex[:6]}.pem")
     asia_node.is_sleeping = True # Asia goes to sleep and mines
     asia_node.register()
 

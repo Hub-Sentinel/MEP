@@ -3,3 +3,4 @@ uvicorn
 pydantic
 websockets
 cryptography
+psycopg2-binary

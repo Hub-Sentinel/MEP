@@ -10,16 +10,20 @@ import requests
 import uuid
 import sys
 import os
+import time
+import urllib.parse
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from identity import MEPIdentity
 
 HUB_URL = "http://localhost:8000"
 WS_URL = "ws://localhost:8000"
 
 class MEPProvider:
-    def __init__(self, node_id: str):
-        self.node_id = node_id
+    def __init__(self, key_path: str):
+        self.identity = MEPIdentity(key_path)
+        self.node_id = self.identity.node_id
         self.balance = 0.0
         self.is_mining = True
         
@@ -29,7 +33,7 @@ class MEPProvider:
         
         # Register with hub
         try:
-            resp = # Registration happens automatically now via Identity module, json={"pubkey": self.node_id})
+            resp = requests.post(f"{HUB_URL}/register", json={"pubkey": self.identity.pub_pem})
             data = resp.json()
             self.balance = data.get("balance", 0.0)
             print(f"[MEP Provider {self.node_id}] Registered. Balance: {self.balance:.6f} SECONDS")
@@ -38,7 +42,10 @@ class MEPProvider:
             return
         
         # Connect to WebSocket
-        uri = f"{WS_URL}/ws/{self.node_id}"
+        ts = str(int(time.time()))
+        sig = self.identity.sign(self.node_id, ts)
+        sig_safe = urllib.parse.quote(sig)
+        uri = f"{WS_URL}/ws/{self.node_id}?timestamp={ts}&signature={sig_safe}"
         try:
             async with websockets.connect(uri) as ws:
                 print(f"[MEP Provider {self.node_id}] Connected to MEP Hub")
@@ -67,8 +74,6 @@ class MEPProvider:
         """Phase 2: Evaluate Request For Compute and submit Bid."""
         task_id = rfc_data["id"]
         bounty = rfc_data["bounty"]
-        model = rfc_data.get("model_requirement")
-        
         # SAFETY SWITCH: Prevent purchasing data unless explicitly allowed
         max_purchase_price = 0.0 # Set to e.g., -5.0 to buy premium data
         if bounty < max_purchase_price:
@@ -79,10 +84,13 @@ class MEPProvider:
         
         # Place bid
         try:
-            resp = requests.post(f"{HUB_URL}/tasks/bid", json={
+            payload_str = json.dumps({
                 "task_id": task_id,
                 "provider_id": self.node_id
             })
+            headers = self.identity.get_auth_headers(payload_str)
+            headers["Content-Type"] = "application/json"
+            resp = requests.post(f"{HUB_URL}/tasks/bid", data=payload_str, headers=headers)
             
             if resp.status_code == 200:
                 data = resp.json()
@@ -107,8 +115,6 @@ class MEPProvider:
         task_id = task_data["id"]
         payload = task_data["payload"]
         bounty = task_data["bounty"]
-        consumer_id = task_data["consumer_id"]
-        
         print(f"[MEP Provider {self.node_id}] Received task {task_id[:8]} for {bounty:.6f} SECONDS")
         print(f"  Payload: {payload[:50]}...")
         
@@ -131,11 +137,14 @@ Would you like me to elaborate on any specific aspect?"""
         
         # Submit result
         try:
-            resp = requests.post(f"{HUB_URL}/tasks/complete", json={
+            payload_str = json.dumps({
                 "task_id": task_id,
                 "provider_id": self.node_id,
                 "result_payload": result
             })
+            headers = self.identity.get_auth_headers(payload_str)
+            headers["Content-Type"] = "application/json"
+            resp = requests.post(f"{HUB_URL}/tasks/complete", data=payload_str, headers=headers)
             
             if resp.status_code == 200:
                 data = resp.json()
@@ -154,9 +163,8 @@ Would you like me to elaborate on any specific aspect?"""
         print(f"[MEP Provider {self.node_id}] Stopping...")
 
 async def main():
-    # Create a miner with unique ID
-    provider_id = f"mep-provider-{uuid.uuid4().hex[:8]}"
-    miner = MEPProvider(provider_id)
+    key_path = f"mep_provider_{uuid.uuid4().hex[:8]}.pem"
+    miner = MEPProvider(key_path)
     
     try:
         await miner.connect()

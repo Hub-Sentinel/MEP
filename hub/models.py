@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Dict
-from datetime import datetime
+from typing import Optional
 
 class NodeRegistration(BaseModel):
     pubkey: str = Field(..., description="Node's public key or UUID")

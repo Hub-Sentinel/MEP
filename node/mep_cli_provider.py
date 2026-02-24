@@ -9,22 +9,25 @@ import websockets
 import json
 import requests
 import uuid
-import sys
 import os
 import shlex
+import time
+import urllib.parse
+import tempfile
+from identity import MEPIdentity
 
 HUB_URL = "http://localhost:8000"
 WS_URL = "ws://localhost:8000"
 
 class MEPCLIProvider:
-    def __init__(self, node_id: str):
-        self.node_id = node_id
+    def __init__(self, key_path: str):
+        self.identity = MEPIdentity(key_path)
+        self.node_id = self.identity.node_id
         self.balance = 0.0
         self.is_contributing = True
         self.capabilities = ["cli-agent", "bash", "python"]
         
-        # Security: In production, run this inside a Docker container!
-        self.workspace_dir = "/tmp/mep_workspaces"
+        self.workspace_dir = os.path.join(tempfile.gettempdir(), "mep_workspaces")
         os.makedirs(self.workspace_dir, exist_ok=True)
         
     async def connect(self):
@@ -33,17 +36,20 @@ class MEPCLIProvider:
         
         # Register with hub
         try:
-            resp = # Registration happens automatically now via Identity module, json={"pubkey": self.node_id})
+            resp = requests.post(f"{HUB_URL}/register", json={"pubkey": self.identity.pub_pem})
             self.balance = resp.json().get("balance", 0.0)
             print(f"[CLI Provider] Registered. Balance: {self.balance:.6f} SECONDS")
         except Exception as e:
             print(f"[CLI Provider] Registration failed: {e}")
             return
             
-        uri = f"{WS_URL}/ws/{self.node_id}"
+        ts = str(int(time.time()))
+        sig = self.identity.sign(self.node_id, ts)
+        sig_safe = urllib.parse.quote(sig)
+        uri = f"{WS_URL}/ws/{self.node_id}?timestamp={ts}&signature={sig_safe}"
         try:
             async with websockets.connect(uri) as ws:
-                print(f"[CLI Provider] Connected to MEP Hub. Awaiting CLI tasks...")
+                print("[CLI Provider] Connected to MEP Hub. Awaiting CLI tasks...")
                 while self.is_contributing:
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=1.0)
@@ -75,10 +81,13 @@ class MEPCLIProvider:
         print(f"[CLI Provider] Received matching RFC {task_id[:8]} for {bounty:.6f} SECONDS. Bidding...")
         
         try:
-            resp = requests.post(f"{HUB_URL}/tasks/bid", json={
+            payload_str = json.dumps({
                 "task_id": task_id,
                 "provider_id": self.node_id
             })
+            headers = self.identity.get_auth_headers(payload_str)
+            headers["Content-Type"] = "application/json"
+            resp = requests.post(f"{HUB_URL}/tasks/bid", data=payload_str, headers=headers)
             
             if resp.status_code == 200:
                 data = resp.json()
@@ -136,11 +145,14 @@ class MEPCLIProvider:
         result_payload = f"```bash\n{output}\n```\n*Workspace: {task_dir}*"
         
         # Submit result back to Hub
-        requests.post(f"{HUB_URL}/tasks/complete", json={
+        payload_str = json.dumps({
             "task_id": task_id,
             "provider_id": self.node_id,
             "result_payload": result_payload
         })
+        headers = self.identity.get_auth_headers(payload_str)
+        headers["Content-Type"] = "application/json"
+        requests.post(f"{HUB_URL}/tasks/complete", data=payload_str, headers=headers)
         print(f"[CLI Provider] Result submitted! Earned {bounty:.6f} SECONDS.\n")
 
 if __name__ == "__main__":
@@ -149,8 +161,8 @@ if __name__ == "__main__":
     print("WARNING: This node executes shell commands. Use sandboxing!")
     print("=" * 60)
     
-    provider_id = f"cli-agent-{uuid.uuid4().hex[:6]}"
-    provider = MEPCLIProvider(provider_id)
+    key_path = f"cli_provider_{uuid.uuid4().hex[:6]}.pem"
+    provider = MEPCLIProvider(key_path)
     
     try:
         asyncio.run(provider.connect())

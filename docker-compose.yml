@@ -9,6 +9,24 @@ services:
       - "8000:8000"
     volumes:
       - ./hub_data:/app/logs
-      - ./hub_data/ledger.db:/app/ledger.db
     environment:
       - TZ=UTC
+      - MEP_DATABASE_URL=postgresql://mep:mep@postgres:5432/mep
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16
+    container_name: mep-postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=mep
+      - POSTGRES_PASSWORD=mep
+      - POSTGRES_DB=mep
+    volumes:
+      - ./hub_data/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mep -d mep"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

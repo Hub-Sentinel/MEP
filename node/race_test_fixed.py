@@ -8,6 +8,8 @@ import json
 import requests
 import uuid
 import time
+import urllib.parse
+from identity import MEPIdentity
 
 HUB_URL = "http://localhost:8000"
 WS_URL = "ws://localhost:8000"
@@ -16,7 +18,8 @@ class RacingProvider:
     def __init__(self, name, location):
         self.name = name
         self.location = location
-        self.node_id = f"{name}-{uuid.uuid4().hex[:6]}"
+        self.identity = MEPIdentity(f"{name.replace(' ', '_')}_{uuid.uuid4().hex[:6]}.pem")
+        self.node_id = self.identity.node_id
         self.balance = 0
         self.won_race = False
         self.response_time = None
@@ -24,8 +27,11 @@ class RacingProvider:
         
     async def connect(self):
         """Connect to hub and wait for tasks."""
-        requests.post(f"{HUB_URL}/register", json={"pubkey": self.node_id})
-        self.ws = await websockets.connect(f"{WS_URL}/ws/{self.node_id}")
+        requests.post(f"{HUB_URL}/register", json={"pubkey": self.identity.pub_pem})
+        ts = str(int(time.time()))
+        sig = self.identity.sign(self.node_id, ts)
+        sig_safe = urllib.parse.quote(sig)
+        self.ws = await websockets.connect(f"{WS_URL}/ws/{self.node_id}?timestamp={ts}&signature={sig_safe}")
         print(f"[{self.name}] Connected to hub")
         return self.ws
         
@@ -44,11 +50,14 @@ class RacingProvider:
                 await asyncio.sleep(0.05)  # Very fast!
                 
                 result = f"WON by {self.name} from {self.location}. Response time: {self.response_time:.3f}s"
-                resp = requests.post(f"{HUB_URL}/tasks/complete", json={
+                payload_str = json.dumps({
                     "task_id": task_id,
                     "provider_id": self.node_id,
                     "result_payload": result
                 })
+                headers = self.identity.get_auth_headers(payload_str)
+                headers["Content-Type"] = "application/json"
+                resp = requests.post(f"{HUB_URL}/tasks/complete", data=payload_str, headers=headers)
                 
                 if resp.status_code == 200:
                     self.won_race = True
@@ -87,8 +96,8 @@ async def run_race():
     await asyncio.sleep(0.5)  # Ensure all connected
     
     # Register consumer and submit task
-    consumer_id = "race-consumer-v2"
-    requests.post(f"{HUB_URL}/register", json={"pubkey": consumer_id})
+    consumer = MEPIdentity(f"race_consumer_{uuid.uuid4().hex[:6]}.pem")
+    requests.post(f"{HUB_URL}/register", json={"pubkey": consumer.pub_pem})
     
     task_payload = "Which provider is fastest in the MEP race?"
     bounty = 7.5
@@ -97,18 +106,21 @@ async def run_race():
     print(f"   Task: {task_payload}")
     print(f"   Bounty: {bounty} SECONDS")
     
-    resp = requests.post(f"{HUB_URL}/tasks/submit", json={
-        "consumer_id": consumer_id,
+    payload_str = json.dumps({
+        "consumer_id": consumer.node_id,
         "payload": task_payload,
         "bounty": bounty
     })
+    headers = consumer.get_auth_headers(payload_str)
+    headers["Content-Type"] = "application/json"
+    resp = requests.post(f"{HUB_URL}/tasks/submit", data=payload_str, headers=headers)
     
     task_id = resp.json()["task_id"]
     print(f"   Task ID: {task_id[:8]}...")
     
     # All providers listen simultaneously
     print("\n🏁 ALL PROVIDERS LISTENING... RACE STARTS!")
-    results = await asyncio.gather(*[provider.listen_for_task(task_id, bounty) for provider in providers])
+    await asyncio.gather(*[provider.listen_for_task(task_id, bounty) for provider in providers])
     
     # Close connections
     for provider in providers:
@@ -129,7 +141,7 @@ async def run_race():
         print(f"   New balance: {winner.balance} SECONDS")
         
         # Show all times
-        print(f"\n📊 All response times:")
+        print("\n📊 All response times:")
         for provider in providers:
             if provider.response_time:
                 status = "✅ WON" if provider.won_race else "❌ Lost"
@@ -138,7 +150,7 @@ async def run_race():
         print("❌ No winner - check hub logs")
     
     # Consumer balance
-    balance_resp = requests.get(f"{HUB_URL}/balance/{consumer_id}")
+    balance_resp = requests.get(f"{HUB_URL}/balance/{consumer.node_id}")
     consumer_balance = balance_resp.json()["balance_seconds"]
     print(f"\n💰 Consumer balance: {consumer_balance} SECONDS")
     

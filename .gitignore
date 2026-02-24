@@ -1,2 +1,12 @@
-\n*.db\n*.sqlite3
+*.db
+*.sqlite3
+*.pem
+*.pyc
+__pycache__/
+.mypy_cache/
+.ruff_cache/
 /logs
+hub/logs/
+hub/__pycache__/
+node/__pycache__/
+hub_data/

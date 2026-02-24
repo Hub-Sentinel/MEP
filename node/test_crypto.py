@@ -26,7 +26,7 @@ async def test():
     
     ws_url = f"ws://localhost:8000/ws/{bot.node_id}?timestamp={ts}&signature={sig_safe}"
     try:
-        async with websockets.connect(ws_url) as ws:
+        async with websockets.connect(ws_url):
             print("✅ WebSocket Authenticated!")
             
             # 4. Submit Task
