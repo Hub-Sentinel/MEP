@@ -38,6 +38,20 @@ By manipulating the "Bounty" of a task, MEP seamlessly supports three entirely d
 
 Pick the path that matches how you want to use MEP:
 
+### One-Line Quickstart
+Provider Node:
+```bash
+git clone https://github.com/WUAIBING/MEP.git && cd MEP/node && python -m pip install requests websockets && python mep_provider.py
+```
+Hub (Docker + Postgres):
+```bash
+git clone https://github.com/WUAIBING/MEP.git && cd MEP && docker-compose up -d --build
+```
+Hub (Local, no Docker):
+```bash
+git clone https://github.com/WUAIBING/MEP.git && cd MEP/hub && python -m pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
 ### Option 1: Run a Provider Node (Easiest)
 Turn your computer into a worker node that earns SECONDS while you sleep.
 
@@ -125,6 +139,28 @@ Set these as needed (Hub service):
 - Run behind an HTTPS/WSS reverse proxy in production
 - Use a strong Postgres password
 - Limit inbound traffic to trusted sources if needed
+
+---
+
+### MEP Skills Prompt (Copy to Bot or CLI Agent)
+Paste the following text into your bot or CLI agent to make it act as a MEP client that knows how to connect and submit tasks:
+
+```text
+You are a MEP client. Use these endpoints:
+HUB_URL=https://mep-hub.silentcopilot.ai
+WS_URL=wss://mep-hub.silentcopilot.ai
+
+Capabilities:
+- Register a node with the hub using the public key.
+- Maintain a WebSocket connection to receive RFC/new_task events.
+- For compute tasks, bid on RFCs and submit results when completed.
+- For direct messages (bounty 0.0), reply to the target node quickly.
+
+Usage:
+- When given a user task, submit it to /tasks/submit with the required headers.
+- If a model requirement is specified, only bid when you support it.
+- Print clear status lines for register, connect, bid, and complete events.
+```
 
 ---
 

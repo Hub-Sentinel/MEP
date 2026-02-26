@@ -92,7 +92,7 @@ class MEPCLIProvider:
             if resp.status_code == 200:
                 data = resp.json()
                 if data["status"] == "accepted":
-                    print(f"[CLI Provider] 🏁 BID WON! Executing CLI agent for task {task_id[:8]}...")
+                    print(f"[CLI Provider] BID WON! Executing CLI agent for task {task_id[:8]}...")
                     task_data = {
                         "id": task_id,
                         "payload": data["payload"],
@@ -120,7 +120,7 @@ class MEPCLIProvider:
         # --- COMMAND TEMPLATE ---
         # Replace this with: f"aider --message {safe_payload}" 
         # or: f"claude-code --print {safe_payload}"
-        cmd = f"echo '⚙️ Booting Autonomous CLI Agent...' && sleep 1 && echo 'Analyzing: {safe_payload}' && sleep 1 && echo '✅ Code generated and saved to workspace.'"
+        cmd = f"echo 'Booting Autonomous CLI Agent...' && sleep 1 && echo 'Analyzing: {safe_payload}' && sleep 1 && echo 'Code generated and saved to workspace.'"
         
         print(f"\n[CLI Agent] Executing in {task_dir}:")
         print(f"$ {cmd[:100]}...\n")
