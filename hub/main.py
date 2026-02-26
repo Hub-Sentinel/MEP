@@ -22,7 +22,15 @@ RATE_LIMIT_WINDOW = 10.0
 RATE_LIMIT_MAX = 50
 MAX_SKEW_SECONDS = 300
 ALLOWED_IPS = [ip.strip() for ip in os.getenv("MEP_ALLOWED_IPS", "").split(",") if ip.strip()]
-for task in db.get_active_tasks():
+REQUEUE_ASSIGNED_ON_START = os.getenv("MEP_REQUEUE_ASSIGNED_ON_START", "false").lower() in ("1", "true", "yes")
+active_db_tasks = db.get_active_tasks()
+if REQUEUE_ASSIGNED_ON_START and active_db_tasks:
+    now = time.time()
+    for task in active_db_tasks:
+        if task["status"] == "assigned" and not task["target_node"]:
+            db.update_task_status(task["task_id"], "bidding", now)
+            log_event("task_requeued", f"Task {task['task_id'][:8]} requeued on startup", consumer_id=task["consumer_id"], task_id=task["task_id"], bounty=task["bounty"])
+for task in active_db_tasks:
     task_data = {
         "id": task["task_id"],
         "consumer_id": task["consumer_id"],
