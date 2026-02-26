@@ -8,7 +8,6 @@ import asyncio
 import websockets
 import json
 import requests
-import uuid
 import os
 import shlex
 import time
@@ -161,7 +160,7 @@ if __name__ == "__main__":
     print("WARNING: This node executes shell commands. Use sandboxing!")
     print("=" * 60)
     
-    key_path = os.path.join(tempfile.gettempdir(), f"cli_provider_{uuid.uuid4().hex[:6]}.pem")
+    key_path = os.getenv("MEP_CLI_KEY_PATH", os.path.join(tempfile.gettempdir(), "mep_cli_provider.pem"))
     provider = MEPCLIProvider(key_path)
     
     try:
