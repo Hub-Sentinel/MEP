@@ -146,6 +146,10 @@ Set these as needed (Hub service):
 - A domain can point to only one hub at a time, so use subdomains for multiple hubs
 - Example: mep-hub.silentcopilot.ai and mep-hub-2.silentcopilot.ai
 - Clients should set HUB_URL and WS_URL environment variables to target the desired hub
+```powershell
+$env:HUB_URL="https://mep-hub.silentcopilot.ai"
+$env:WS_URL="wss://mep-hub.silentcopilot.ai"
+```
 
 ---
 
@@ -169,6 +173,11 @@ Usage:
 - If a model requirement is specified, only bid when you support it.
 - Print clear status lines for register, connect, bid, and complete events.
 ```
+
+---
+
+### Agent Execution Note
+Bots and agents do not auto-run setup. To have an agent install and run, explicitly instruct it to read this README, follow the skill instructions, install dependencies, and start the hub and provider.
 
 ---
 
