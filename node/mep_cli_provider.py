@@ -17,8 +17,8 @@ import urllib.parse
 import tempfile
 from identity import MEPIdentity
 
-HUB_URL = os.getenv("HUB_URL", "http://localhost:8000")
-WS_URL = os.getenv("WS_URL", "ws://localhost:8000")
+HUB_URL = os.getenv("HUB_URL", "https://mep-hub.silentcopilot.ai")
+WS_URL = os.getenv("WS_URL", "wss://mep-hub.silentcopilot.ai")
 
 class MEPCLIProvider:
     def __init__(self, key_path: str):
@@ -40,6 +40,8 @@ class MEPCLIProvider:
         
         self.workspace_dir = os.path.join(tempfile.gettempdir(), "mep_workspaces")
         os.makedirs(self.workspace_dir, exist_ok=True)
+        self.upload_code = os.getenv("MEP_CLI_UPLOAD_CODE", "false").lower() in ("1", "true", "yes")
+        self.max_code_chars = int(os.getenv("MEP_CLI_MAX_CODE_CHARS", "12000"))
 
     async def _post_with_retry(self, url: str, payload_str: str | None = None, json_body: dict | None = None, headers: dict | None = None, timeout: int = 20):
         delays = [1, 2, 4, 8]
@@ -158,6 +160,18 @@ class MEPCLIProvider:
                     "sleep 1 && "
                     "echo 'Code generated and saved to workspace.'"
                 )
+            agent_cmd = os.getenv("MEP_CLI_AGENT_CMD")
+            if agent_cmd:
+                if "{payload}" in agent_cmd:
+                    if os.name == "nt":
+                        cmd = agent_cmd.replace("{payload}", safe_payload)
+                    else:
+                        cmd = agent_cmd.replace("{payload}", safe_payload)
+                else:
+                    if os.name == "nt":
+                        cmd = f'{agent_cmd} "{safe_payload}"'
+                    else:
+                        cmd = f"{agent_cmd} {safe_payload}"
             
             print(f"\n[CLI Agent] Executing in {task_dir}:")
             print(f"$ {cmd[:100]}...\n")
@@ -176,8 +190,24 @@ class MEPCLIProvider:
                 output += "\n[Errors/Warnings]:\n" + stderr.decode(errors="replace").strip()
                 
             print(f"[CLI Agent] Finished with exit code {process.returncode}")
-            
-            result_payload = f"```bash\n{output}\n```\n*Workspace: {task_dir}*"
+            code_block = ""
+            if self.upload_code:
+                candidates = [
+                    os.path.join(task_dir, name)
+                    for name in os.listdir(task_dir)
+                    if name.lower().endswith(".py")
+                ]
+                if candidates:
+                    script_path = max(candidates, key=lambda p: os.path.getmtime(p))
+                    try:
+                        with open(script_path, "r", encoding="utf-8", errors="replace") as f:
+                            code_text = f.read()
+                        if len(code_text) > self.max_code_chars:
+                            code_text = code_text[: self.max_code_chars] + "\n...truncated..."
+                        code_block = f"\n\n```python\n{code_text}\n```"
+                    except Exception as e:
+                        code_block = f"\n\n[Code upload failed: {e}]"
+            result_payload = f"```bash\n{output}\n```\n*Workspace: {task_dir}*{code_block}"
             
             payload_str = json.dumps({
                 "task_id": task_id,
