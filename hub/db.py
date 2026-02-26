@@ -9,7 +9,7 @@ try:
 except ImportError:
     psycopg2 = None
 
-DB_FILE = os.getenv("MEP_SQLITE_PATH", "ledger.db")
+DB_FILE = os.getenv("MEP_SQLITE_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ledger.db"))
 DB_URL = os.getenv("MEP_DATABASE_URL")
 PG_POOL_MIN = int(os.getenv("MEP_PG_POOL_MIN", "1"))
 PG_POOL_MAX = int(os.getenv("MEP_PG_POOL_MAX", "5"))

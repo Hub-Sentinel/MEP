@@ -7,19 +7,17 @@ import asyncio
 import json
 import websockets
 import requests
-import uuid
 import sys
 import os
 import time
 import urllib.parse
-import tempfile
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from identity import MEPIdentity
 
-HUB_URL = "http://localhost:8000"
-WS_URL = "ws://localhost:8000"
+HUB_URL = os.getenv("HUB_URL", "http://localhost:8000")
+WS_URL = os.getenv("WS_URL", "ws://localhost:8000")
 
 class MEPProvider:
     def __init__(self, key_path: str):
@@ -164,7 +162,9 @@ Would you like me to elaborate on any specific aspect?"""
         print(f"[MEP Provider {self.node_id}] Stopping...")
 
 async def main():
-    key_path = os.path.join(tempfile.gettempdir(), f"mep_provider_{uuid.uuid4().hex[:8]}.pem")
+    key_dir = os.getenv("MEP_KEY_DIR", os.path.join(os.path.expanduser("~"), ".mep"))
+    os.makedirs(key_dir, exist_ok=True)
+    key_path = os.getenv("MEP_PROVIDER_KEY_PATH", os.path.join(key_dir, "mep_provider.pem"))
     miner = MEPProvider(key_path)
     
     try:

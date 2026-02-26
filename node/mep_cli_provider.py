@@ -186,7 +186,9 @@ if __name__ == "__main__":
     print("WARNING: This node executes shell commands. Use sandboxing!")
     print("=" * 60)
     
-    key_path = os.getenv("MEP_CLI_KEY_PATH", os.path.join(tempfile.gettempdir(), "mep_cli_provider.pem"))
+    key_dir = os.getenv("MEP_KEY_DIR", os.path.join(os.path.expanduser("~"), ".mep"))
+    os.makedirs(key_dir, exist_ok=True)
+    key_path = os.getenv("MEP_CLI_KEY_PATH", os.path.join(key_dir, "mep_cli_provider.pem"))
     provider = MEPCLIProvider(key_path)
     
     try:
