@@ -19,6 +19,9 @@ WS_URL = os.getenv("WS_URL", "wss://mep-hub.silentcopilot.ai")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DEFAULT_BOUNTY = float(os.getenv("MEP_DEFAULT_BOUNTY", "5.0"))
 BOT_KEY_PATH = os.getenv("MEP_BOT_KEY_PATH", os.path.join(tempfile.gettempdir(), "mep_discord_bot.pem"))
+EXECUTE_SCRIPTS = os.getenv("MEP_BOT_EXECUTE_SCRIPTS", "false").lower() in ("1", "true", "yes")
+EXECUTION_TIMEOUT = int(os.getenv("MEP_BOT_EXECUTION_TIMEOUT", "20"))
+MAX_OUTPUT_CHARS = int(os.getenv("MEP_BOT_MAX_OUTPUT_CHARS", "1800"))
 
 
 class MEPClient:
@@ -140,6 +143,59 @@ def parse_task_args(text: str):
     payload = " ".join(payload_parts).strip()
     return payload, bounty, model, target
 
+def _extract_workspace_path(result_payload: str) -> str | None:
+    for line in result_payload.splitlines():
+        if "Workspace:" in line:
+            part = line.split("Workspace:", 1)[1].strip()
+            return part.strip("*").strip()
+    return None
+
+def _is_safe_workspace(path: str) -> bool:
+    base = os.path.abspath(os.path.join(tempfile.gettempdir(), "mep_workspaces"))
+    target = os.path.abspath(path)
+    try:
+        return os.path.commonpath([base, target]) == base
+    except ValueError:
+        return False
+
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
+async def _run_workspace_script(workspace_path: str) -> tuple[str, str] | None:
+    if not _is_safe_workspace(workspace_path):
+        return None
+    if not os.path.isdir(workspace_path):
+        return None
+    candidates = [
+        os.path.join(workspace_path, name)
+        for name in os.listdir(workspace_path)
+        if name.lower().endswith(".py")
+    ]
+    if not candidates:
+        return None
+    script_path = max(candidates, key=lambda p: os.path.getmtime(p))
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        script_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=workspace_path
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=EXECUTION_TIMEOUT)
+    except asyncio.TimeoutError:
+        process.kill()
+        return ("Execution timed out", os.path.basename(script_path))
+    output = stdout.decode(errors="replace").strip()
+    err = stderr.decode(errors="replace").strip()
+    if err:
+        output = f"{output}\n{err}".strip()
+    if not output:
+        output = "(no output)"
+    return (_truncate(output, MAX_OUTPUT_CHARS), os.path.basename(script_path))
+
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -162,7 +218,14 @@ async def on_ready():
         if channel is None:
             return
         result = data.get("result_payload", "")
-        await channel.send(f"Completed task {task_id}: {result}")
+        await channel.send(f"Completed task {task_id}: {_truncate(result, MAX_OUTPUT_CHARS)}")
+        if EXECUTE_SCRIPTS:
+            workspace_path = _extract_workspace_path(result)
+            if workspace_path:
+                run_result = await _run_workspace_script(workspace_path)
+                if run_result:
+                    output, script_name = run_result
+                    await channel.send(f"Executed {script_name}:\n```text\n{output}\n```")
 
     bot.loop.create_task(client.listen_results(on_result))
 
