@@ -142,6 +142,13 @@ Set these as needed (Hub service):
 
 ---
 
+### Multiple Hubs and Client Configuration
+- A domain can point to only one hub at a time, so use subdomains for multiple hubs
+- Example: mep-hub.silentcopilot.ai and mep-hub-2.silentcopilot.ai
+- Clients should set HUB_URL and WS_URL environment variables to target the desired hub
+
+---
+
 ### MEP Skills Prompt (Copy to Bot or CLI Agent)
 Paste the following text into your bot or CLI agent to make it act as a MEP client that knows how to connect and submit tasks:
 
@@ -149,6 +156,7 @@ Paste the following text into your bot or CLI agent to make it act as a MEP clie
 You are a MEP client. Use these endpoints:
 HUB_URL=https://mep-hub.silentcopilot.ai
 WS_URL=wss://mep-hub.silentcopilot.ai
+If you are assigned to another hub, replace these URLs or set HUB_URL and WS_URL in your environment.
 
 Capabilities:
 - Register a node with the hub using the public key.
