@@ -132,6 +132,17 @@ def get_balance(node_id: str) -> Optional[float]:
     _release_conn(conn)
     return row[0] if row else None
 
+def get_node_count() -> int:
+    conn = _get_conn()
+    cursor = conn.cursor()
+    if _is_postgres():
+        cursor.execute("SELECT COUNT(*) FROM ledger")
+    else:
+        cursor.execute("SELECT COUNT(*) FROM ledger")
+    row = cursor.fetchone()
+    _release_conn(conn)
+    return int(row[0]) if row else 0
+
 def set_balance(node_id: str, balance: float):
     conn = _get_conn()
     cursor = conn.cursor()
@@ -308,6 +319,17 @@ def get_active_tasks() -> list:
     result = [dict(row) for row in rows]
     _release_conn(conn)
     return result
+
+def get_last_completed_task_time() -> Optional[float]:
+    conn = _get_conn()
+    cursor = conn.cursor()
+    if _is_postgres():
+        cursor.execute("SELECT updated_at FROM tasks WHERE status = 'completed' ORDER BY updated_at DESC LIMIT 1")
+    else:
+        cursor.execute("SELECT updated_at FROM tasks WHERE status = 'completed' ORDER BY updated_at DESC LIMIT 1")
+    row = cursor.fetchone()
+    _release_conn(conn)
+    return float(row[0]) if row else None
 
 def get_idempotency(node_id: str, endpoint: str, idem_key: str) -> Optional[dict]:
     conn = _get_conn()

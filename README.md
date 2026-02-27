@@ -142,6 +142,13 @@ Set these as needed (Hub service):
 
 ---
 
+### Ledger and Transactions
+- Server-wide audit tail: `GET /logs/ledger_audit.log`
+- Per-node transactions: `GET /ledger/entries?limit=50` with required auth headers
+- The per-node endpoint returns only entries that match the authenticated node id
+
+---
+
 ### Multiple Hubs and Client Configuration
 - A domain can point to only one hub at a time, so use subdomains for multiple hubs
 - Example: mep-hub.silentcopilot.ai and mep-hub-2.silentcopilot.ai

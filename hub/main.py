@@ -1,8 +1,12 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Header, Depends
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from typing import Dict, List, Optional
 import uuid
 import time
+import json
+from datetime import datetime
 import os
+import ctypes
 import db
 import auth
 from logger import log_event, log_audit
@@ -67,6 +71,71 @@ def _validate_timestamp(ts: str):
     now = int(time.time())
     if abs(now - ts_int) > MAX_SKEW_SECONDS:
         raise HTTPException(status_code=401, detail="Timestamp out of allowed window")
+
+def _format_uptime(seconds: int) -> str:
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+def _get_system_uptime_seconds() -> Optional[float]:
+    proc_uptime = "/proc/uptime"
+    if os.path.exists(proc_uptime):
+        try:
+            with open(proc_uptime, "r", encoding="utf-8") as f:
+                value = f.read().split()[0]
+            return float(value)
+        except Exception:
+            return None
+    try:
+        return ctypes.windll.kernel32.GetTickCount64() / 1000.0
+    except Exception:
+        return None
+
+def _resolve_log_path(filename: str) -> Optional[str]:
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", filename),
+        os.path.join(os.getcwd(), "logs", filename)
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+def _tail_lines(path: str, limit: int) -> list[str]:
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        return f.readlines()[-limit:]
+
+def _escape_html(value: str) -> str:
+    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+def _read_recent_events(limit: int) -> list[dict]:
+    path = _resolve_log_path("hub.json")
+    if not path:
+        return []
+    lines = _tail_lines(path, limit)
+    events = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+            events.append({
+                "timestamp": entry.get("timestamp", ""),
+                "event": entry.get("event", ""),
+                "message": entry.get("message", "")
+            })
+        except Exception:
+            continue
+    return events
+
+def _read_audit_entries_for_node(node_id: str, limit: int) -> list[str]:
+    path = _resolve_log_path("ledger_audit.log")
+    if not path:
+        return []
+    scan_limit = min(max(limit * 50, 200), 5000)
+    lines = _tail_lines(path, scan_limit)
+    needle = f"Node: {node_id} |"
+    matches = [line.strip() for line in reversed(lines) if needle in line]
+    return list(reversed(matches[:limit]))
 
 async def verify_request(
     request: Request,
@@ -394,6 +463,97 @@ async def get_task_result(task_id: str, authenticated_node: str = Depends(verify
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+@app.get("/logs/ledger_audit.log", response_class=PlainTextResponse)
+async def ledger_audit_log():
+    path = _resolve_log_path("ledger_audit.log")
+    if not path:
+        raise HTTPException(status_code=404, detail="Audit log not found")
+    lines = _tail_lines(path, 200)
+    return PlainTextResponse("".join(lines))
+
+@app.get("/ledger/entries")
+async def ledger_entries(limit: int = 50, authenticated_node: str = Depends(verify_request)):
+    safe_limit = max(1, min(limit, 200))
+    entries = _read_audit_entries_for_node(authenticated_node, safe_limit)
+    return {"node_id": authenticated_node, "entries": entries, "count": len(entries)}
+
+@app.get("/", response_class=HTMLResponse)
+async def hub_landing(request: Request):
+    online_count = len(connected_nodes)
+    active_count = len(active_tasks)
+    uptime_seconds = _get_system_uptime_seconds()
+    uptime = _format_uptime(int(uptime_seconds)) if uptime_seconds is not None else "unknown"
+    status = "online" if uptime_seconds is not None else "unknown"
+    base_url = str(request.base_url).rstrip("/")
+    ws_url = base_url.replace("https://", "wss://").replace("http://", "ws://")
+    total_nodes = db.get_node_count()
+    last_completed_ts = db.get_last_completed_task_time()
+    last_completed = datetime.utcfromtimestamp(last_completed_ts).strftime("%Y-%m-%d %H:%M:%S UTC") if last_completed_ts else "—"
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{app.title}</title>
+  <style>
+    body {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; margin: 40px; color: #111; }}
+    .card {{ border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; max-width: 720px; }}
+    .kpi {{ font-size: 36px; font-weight: 700; }}
+    .label {{ color: #6b7280; font-size: 14px; }}
+    .row {{ display: flex; gap: 24px; margin-top: 16px; flex-wrap: wrap; }}
+    .section {{ margin-top: 20px; }}
+    .mono {{ background: #f8fafc; padding: 10px; border-radius: 8px; }}
+    a {{ color: #2563eb; text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="label">Welcome to MEP Hub 0</div>
+    <div>Version {app.version} • Uptime {uptime} • Status {status}</div>
+    <div class="row">
+      <div>
+        <div class="kpi">{online_count}</div>
+        <div class="label">Bots online</div>
+      </div>
+      <div>
+        <div class="kpi">{active_count}</div>
+        <div class="label">Active tasks</div>
+      </div>
+      <div>
+        <div class="kpi">{total_nodes}</div>
+        <div class="label">Total nodes registered</div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="label">Docs</div>
+      <div><a href="https://github.com/WUAIBING/MEP/blob/main/README.md">GitHub README</a></div>
+    </div>
+    <div class="section">
+      <div class="label">How to connect</div>
+      <div class="mono">HUB_URL={base_url}<br>WS_URL={ws_url}</div>
+    </div>
+    <div class="section">
+      <div class="label">Health</div>
+      <div><a href="{base_url}/health">{base_url}/health</a></div>
+    </div>
+    <div class="section">
+      <div class="label">Last task completed</div>
+      <div>{last_completed}</div>
+    </div>
+    <div class="section">
+      <div class="label">Audit</div>
+      <div><a href="{base_url}/logs/ledger_audit.log">{base_url}/logs/ledger_audit.log</a></div>
+    </div>
+    <div class="section">
+      <div class="label">Auth headers</div>
+      <div>Requests must include x-mep-nodeid, x-mep-timestamp, x-mep-signature.</div>
+    </div>
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(html)
 
 @app.websocket("/ws/{node_id}")
 async def websocket_endpoint(websocket: WebSocket, node_id: str, timestamp: str, signature: str):
