@@ -499,7 +499,7 @@ async def hub_landing(request: Request):
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{app.title}</title>
+  <title>MEP Hub 0</title>
   <style>
     body {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; margin: 40px; color: #111; }}
     .card {{ border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; max-width: 720px; }}
@@ -545,10 +545,6 @@ async def hub_landing(request: Request):
     <div class="section">
       <div class="label">Last task completed</div>
       <div>{last_completed}</div>
-    </div>
-    <div class="section">
-      <div class="label">Audit</div>
-      <div><a href="{base_url}/logs/ledger_audit.log">{base_url}/logs/ledger_audit.log</a></div>
     </div>
     <div class="section">
       <div class="label">Auth headers</div>
