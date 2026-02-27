@@ -298,13 +298,6 @@ async def registry_heartbeat(payload: RegistryHeartbeat, authenticated_node: str
     db.update_registry_availability(authenticated_node, availability, time.time())
     return {"status": "success", "node_id": authenticated_node, "availability": availability}
 
-@app.get("/registry/{node_id}")
-async def get_registry(node_id: str):
-    entry = db.get_registry(node_id)
-    if not entry:
-        raise HTTPException(status_code=404, detail="Registry entry not found")
-    return entry
-
 @app.get("/registry/search")
 async def search_registry(
     alias: Optional[str] = None,
@@ -330,6 +323,13 @@ async def search_registry(
     normalized_availability = _normalize_availability(availability) if availability else None
     results = db.search_registry(normalized_alias, normalized_skill, normalized_model, normalized_availability, safe_min_score, safe_min_reviews, min_updated_at, safe_limit)
     return {"count": len(results), "results": results}
+
+@app.get("/registry/{node_id}")
+async def get_registry(node_id: str):
+    entry = db.get_registry(node_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Registry entry not found")
+    return entry
 
 @app.post("/reputation/submit")
 async def submit_reputation(payload: ReputationSubmit, authenticated_node: str = Depends(verify_request)):
