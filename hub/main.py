@@ -485,7 +485,11 @@ async def hub_landing(request: Request):
     uptime_seconds = _get_system_uptime_seconds()
     uptime = _format_uptime(int(uptime_seconds)) if uptime_seconds is not None else "unknown"
     status = "online" if uptime_seconds is not None else "unknown"
-    base_url = str(request.base_url).rstrip("/")
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    if forwarded_proto in ("http", "https"):
+        base_url = str(request.base_url).replace(request.url.scheme + "://", f"{forwarded_proto}://", 1).rstrip("/")
+    else:
+        base_url = str(request.base_url).rstrip("/")
     ws_url = base_url.replace("https://", "wss://").replace("http://", "ws://")
     total_nodes = db.get_node_count()
     last_completed_ts = db.get_last_completed_task_time()
