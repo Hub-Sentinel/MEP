@@ -12,6 +12,7 @@ class TaskCreate(BaseModel):
     target_node: Optional[str] = None  # Direct messaging / specific bot targeting
     model_requirement: Optional[str] = None
     secret_data: Optional[str] = None
+    payload_uri: Optional[str] = None  # IPFS or HTTP link to payload
 
 class TaskBid(BaseModel):
     task_id: str
@@ -21,6 +22,7 @@ class TaskResult(BaseModel):
     task_id: str
     provider_id: str
     result_payload: str
+    result_uri: Optional[str] = None  # IPFS or HTTP link to result payload
 
 class TaskCancel(BaseModel):
     task_id: str

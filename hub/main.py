@@ -416,9 +416,10 @@ async def submit_task(
         "bounty": task.bounty,
         "status": "bidding",
         "target_node": task.target_node,
-        "model_requirement": task.model_requirement
+        "model_requirement": task.model_requirement,
+        "payload_uri": task.payload_uri
     }
-    db.create_task(task_id, task.consumer_id, task.payload, task.bounty, "bidding", task.target_node, task.model_requirement, now, result_payload=task.secret_data)
+    db.create_task(task_id, task.consumer_id, task.payload, task.bounty, "bidding", task.target_node, task.model_requirement, now, result_payload=task.secret_data, payload_uri=task.payload_uri)
     async with task_lock:
         active_tasks[task_id] = task_data
 
@@ -455,7 +456,8 @@ async def submit_task(
         "id": task_id,
         "consumer_id": task.consumer_id,
         "bounty": task.bounty,
-        "model_requirement": task.model_requirement
+        "model_requirement": task.model_requirement,
+        "payload_uri": task.payload_uri
     }
     async with node_lock:
         broadcast_nodes = list(connected_nodes.items())
@@ -545,6 +547,7 @@ async def place_bid(bid: TaskBid, authenticated_node: str = Depends(verify_reque
         payload = task["payload"]
         consumer_id = task["consumer_id"]
         model_requirement = task.get("model_requirement")
+        payload_uri = task.get("payload_uri")
         bounty = task["bounty"]
 
     log_event("bid_accepted", f"Task {bid.task_id[:8]} assigned to {bid.provider_id}", task_id=bid.task_id, provider_id=bid.provider_id, bounty=bounty)
@@ -553,7 +556,8 @@ async def place_bid(bid: TaskBid, authenticated_node: str = Depends(verify_reque
         "status": "accepted",
         "payload": payload,
         "consumer_id": consumer_id,
-        "model_requirement": model_requirement
+        "model_requirement": model_requirement,
+        "payload_uri": payload_uri
     }
 
 @app.post("/tasks/complete")
@@ -629,7 +633,7 @@ async def complete_task(
         completed_tasks[result.task_id] = task
         if result.task_id in active_tasks:
             del active_tasks[result.task_id]
-    db.update_task_result(result.task_id, result.provider_id, result.result_payload, "completed", time.time())
+    db.update_task_result(result.task_id, result.provider_id, result.result_payload, "completed", time.time(), result_uri=result.result_uri)
 
     # ROUTE RESULT BACK TO CONSUMER VIA WEBSOCKET
     consumer_id = task["consumer_id"]
@@ -643,6 +647,7 @@ async def complete_task(
                     "task_id": result.task_id,
                     "provider_id": result.provider_id,
                     "result_payload": result.result_payload,
+                    "result_uri": result.result_uri,
                     "bounty_spent": task["bounty"]
                 }
             })
@@ -669,7 +674,8 @@ async def get_task_result(task_id: str, authenticated_node: str = Depends(verify
         "consumer_id": task["consumer_id"],
         "provider_id": task["provider_id"],
         "bounty": task["bounty"],
-        "result_payload": task["result_payload"]
+        "result_payload": task["result_payload"],
+        "result_uri": task.get("result_uri")
     }
 
 @app.post("/disputes/open")
