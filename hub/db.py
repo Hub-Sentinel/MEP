@@ -91,6 +91,7 @@ def init_db():
         cursor.execute("ALTER TABLE tasks ADD COLUMN result_uri TEXT")
     except Exception:
         pass
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS idempotency (
             node_id TEXT NOT NULL,
             endpoint TEXT NOT NULL,
