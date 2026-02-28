@@ -83,7 +83,6 @@ def init_db():
             updated_at REAL NOT NULL
         )
     ''')
-    cursor.execute('''
     try:
         cursor.execute("ALTER TABLE tasks ADD COLUMN payload_uri TEXT")
     except Exception:
