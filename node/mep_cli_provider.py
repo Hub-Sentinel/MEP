@@ -1,3 +1,4 @@
+from typing import Optional
 #!/usr/bin/env python3
 """
 MEP CLI Provider
@@ -12,6 +13,9 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 import os
 import shlex
+import aiohttp
+import urllib.parse
+
 import time
 import urllib.parse
 import tempfile
@@ -138,22 +142,46 @@ class MEPCLIProvider:
                         "id": task_id,
                         "payload": data["payload"],
                         "bounty": bounty,
-                        "consumer_id": data["consumer_id"]
+                        "consumer_id": data["consumer_id"],
+                        "payload_uri": data.get("payload_uri")
                     }
                     # Run it in background so we don't block the websocket
                     asyncio.create_task(self.process_task(task_data))
         except Exception as e:
             print(f"[CLI Provider] Error placing bid: {e}")
 
-    async def process_task(self, task_data: dict):
+    async def process_task(self, task_data: dict, secret_data: Optional[str] = None):
         """Execute the task using a local CLI agent."""
         task_id = task_data["id"]
         payload = task_data["payload"]
+        payload_uri = task_data.get("payload_uri")
         bounty = task_data["bounty"]
         
         try:
+            
             task_dir = os.path.join(self.workspace_dir, task_id)
             os.makedirs(task_dir, exist_ok=True)
+            
+            # If there's an IPFS or HTTP payload, download it first!
+            if payload_uri:
+                print(f"[CLI Provider] 📥 Downloading massive payload from {payload_uri}...")
+                dl_url = payload_uri
+                if payload_uri.startswith("ipfs://"):
+                    dl_url = payload_uri.replace("ipfs://", "https://ipfs.io/ipfs/")
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(dl_url) as resp:
+                            if resp.status == 200:
+                                file_path = os.path.join(task_dir, "downloaded_payload.bin")
+                                with open(file_path, "wb") as f:
+                                    f.write(await resp.read())
+                                print(f"[CLI Provider] ✅ Downloaded payload to {file_path}")
+                                payload += f"\n[Note: Large payload downloaded to {file_path}]"
+                            else:
+                                print(f"[CLI Provider] ❌ Failed to download payload: HTTP {resp.status}")
+                except Exception as e:
+                    print(f"[CLI Provider] ❌ Download error: {e}")
+
             print(f"[CLI Provider] Upload code enabled: {self.upload_code}")
             
             if os.name == "nt":
