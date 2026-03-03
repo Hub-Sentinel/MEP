@@ -510,41 +510,84 @@ def set_idempotency(node_id: str, endpoint: str, idem_key: str, response: dict, 
     conn.commit()
     _release_conn(conn)
 
-def upsert_registry(node_id: str, alias: Optional[str], skills: list[str], models: list[str], metadata: dict, availability: str, updated_at: float, x25519_public_key: str = None):
+def upsert_registry(node_id: str, alias: Optional[str], skills: list[str], models: list[str], metadata: dict, availability: str, updated_at: float, x25519_public_key: Optional[str] = None):
     conn = _get_conn()
     cursor = conn.cursor()
+    _ensure_registry_availability_column(cursor)
     skills_payload = json.dumps(skills)
     models_payload = json.dumps(models)
     metadata_payload = json.dumps(metadata)
+    
     if _is_postgres():
-        cursor.execute(
-            "INSERT INTO agent_registry (node_id, alias, skills, models, metadata, availability, updated_at, x25519_public_key) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (node_id) DO UPDATE SET alias = EXCLUDED.alias, skills = EXCLUDED.skills, models = EXCLUDED.models, metadata = EXCLUDED.metadata, availability = EXCLUDED.availability, updated_at = EXCLUDED.updated_at, x25519_public_key = EXCLUDED.x25519_public_key",
-            (node_id, alias, skills_payload, models_payload, metadata_payload, availability, updated_at, x25519_public_key)
-        )
+        query = """
+            INSERT INTO agent_registry (node_id, alias, skills, models, metadata, availability, updated_at, x25519_public_key)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (node_id) DO UPDATE SET
+                alias = EXCLUDED.alias,
+                skills = EXCLUDED.skills,
+                models = EXCLUDED.models,
+                metadata = EXCLUDED.metadata,
+                availability = EXCLUDED.availability,
+                updated_at = EXCLUDED.updated_at
+        """
+        params = [node_id, alias, skills_payload, models_payload, metadata_payload, availability, updated_at, x25519_public_key]
+        if x25519_public_key:
+            query += ", x25519_public_key = EXCLUDED.x25519_public_key"
+        cursor.execute(query, tuple(params))
     else:
-        cursor.execute(
-            "INSERT INTO agent_registry (node_id, alias, skills, models, metadata, availability, updated_at, x25519_public_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(node_id) DO UPDATE SET alias=excluded.alias, skills=excluded.skills, models=excluded.models, metadata=excluded.metadata, availability=excluded.availability, updated_at=excluded.updated_at, x25519_public_key=excluded.x25519_public_key",
-            (node_id, alias, skills_payload, models_payload, metadata_payload, availability, updated_at, x25519_public_key)
-        )
+        query = """
+            INSERT INTO agent_registry (node_id, alias, skills, models, metadata, availability, updated_at, x25519_public_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(node_id) DO UPDATE SET
+                alias=excluded.alias,
+                skills=excluded.skills,
+                models=excluded.models,
+                metadata=excluded.metadata,
+                availability=excluded.availability,
+                updated_at=excluded.updated_at
+        """
+        params = [node_id, alias, skills_payload, models_payload, metadata_payload, availability, updated_at, x25519_public_key]
+        if x25519_public_key:
+            query += ", x25519_public_key=excluded.x25519_public_key"
+        cursor.execute(query, tuple(params))
+        
     conn.commit()
     _release_conn(conn)
 
 def update_registry_availability(node_id: str, availability: str, updated_at: float):
     conn = _get_conn()
     cursor = conn.cursor()
-    skills_payload = json.dumps([])
-    models_payload = json.dumps([])
-    metadata_payload = json.dumps({})
+    _ensure_registry_availability_column(cursor)
+    
     if _is_postgres():
-        cursor.execute(
-            "INSERT INTO agent_registry (node_id, alias, skills, models, metadata, availability, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (node_id) DO UPDATE SET availability = EXCLUDED.availability, updated_at = EXCLUDED.updated_at",
-            (node_id, None, skills_payload, models_payload, metadata_payload, availability, updated_at)
-        )
+        # Check if record exists first
+        cursor.execute("SELECT 1 FROM agent_registry WHERE node_id = %s", (node_id,))
+        if cursor.fetchone():
+            cursor.execute(
+                "UPDATE agent_registry SET availability = %s, updated_at = %s WHERE node_id = %s",
+                (availability, updated_at, node_id)
+            )
+        else:
+            # If not exists, insert with default empty values
+            cursor.execute(
+                "INSERT INTO agent_registry (node_id, alias, skills, models, metadata, availability, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (node_id, None, '[]', '[]', '{}', availability, updated_at)
+            )
     else:
-        cursor.execute(
-            "INSERT INTO agent_registry (node_id, alias, skills, models, metadata, availability, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(node_id) DO UPDATE SET availability=excluded.availability, updated_at=excluded.updated_at",
-            (node_id, None, skills_payload, models_payload, metadata_payload, availability, updated_at)
-        )
+        # Check if record exists first
+        cursor.execute("SELECT 1 FROM agent_registry WHERE node_id = ?", (node_id,))
+        if cursor.fetchone():
+            cursor.execute(
+                "UPDATE agent_registry SET availability = ?, updated_at = ? WHERE node_id = ?",
+                (availability, updated_at, node_id)
+            )
+        else:
+            # If not exists, insert with default empty values
+            cursor.execute(
+                "INSERT INTO agent_registry (node_id, alias, skills, models, metadata, availability, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (node_id, None, '[]', '[]', '{}', availability, updated_at)
+            )
+            
     conn.commit()
     _release_conn(conn)
 
