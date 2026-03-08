@@ -373,9 +373,6 @@ async def submit_task(
     if authenticated_node != task.consumer_id:
         raise HTTPException(status_code=403, detail="Cannot submit tasks on behalf of another node")
 
-    if task.bounty < 0 and not task.secret_data:
-        raise HTTPException(status_code=400, detail="Data market tasks (bounty < 0) require secret_data")
-
     if len(task.payload) > MAX_PAYLOAD_CHARS:
         raise HTTPException(status_code=413, detail="Task payload too large")
     
@@ -391,6 +388,8 @@ async def submit_task(
     # If bounty is positive, consumer is PAYING. Check consumer balance.
     if task.bounty > 0 and consumer_balance < task.bounty:
         raise HTTPException(status_code=400, detail="Insufficient SECONDS balance to pay for task")
+    if task.bounty < 0 and not task.secret_data:
+        raise HTTPException(status_code=400, detail="Data market tasks (bounty < 0) require secret_data")
 
     task_id = str(uuid.uuid4())
     now = time.time()
@@ -458,8 +457,7 @@ async def submit_task(
         "consumer_id": task.consumer_id,
         "bounty": task.bounty,
         "model_requirement": task.model_requirement,
-        "payload_uri": task.payload_uri,
-        "secret_data": task.secret_data
+        "payload_uri": task.payload_uri
     }
     async with node_lock:
         broadcast_nodes = list(connected_nodes.items())
@@ -560,7 +558,7 @@ async def place_bid(bid: TaskBid, authenticated_node: str = Depends(verify_reque
         "consumer_id": consumer_id,
         "model_requirement": model_requirement,
         "payload_uri": payload_uri,
-        "secret_data": task.get("result_payload")
+        "secret_data": task.get("secret_data", task.get("result_payload"))
     }
 
 @app.post("/tasks/complete")
@@ -619,11 +617,11 @@ async def complete_task(
             log_event("data_purchase_failed", f"Provider {result.provider_id} lacks SECONDS to buy {result.task_id}", task_id=result.task_id, provider_id=result.provider_id, cost=cost)
             raise HTTPException(status_code=400, detail="Provider lacks SECONDS to buy this data")
 
-        p_balance = db.get_balance(result.provider_id)
+        p_balance = db.get_balance(result.provider_id) or 0.0
         log_audit("BUY_DATA", result.provider_id, -cost, p_balance, result.task_id)
 
         db.add_balance(task["consumer_id"], cost) # The sender earns SECONDS
-        c_balance = db.get_balance(task["consumer_id"])
+        c_balance = db.get_balance(task["consumer_id"]) or 0.0
         log_audit("SELL_DATA", task["consumer_id"], cost, c_balance, result.task_id)
 
     log_event("task_completed", f"Task {result.task_id[:8]} completed by {result.provider_id}", task_id=result.task_id, provider_id=result.provider_id, bounty=bounty)
