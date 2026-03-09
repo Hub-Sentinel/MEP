@@ -31,6 +31,48 @@ def signed_get(identity: MEPIdentity, path: str):
     headers = identity.get_auth_headers("")
     return requests.get(f"{HUB_URL}{path}", headers=headers)
 
+def signed_post(identity: MEPIdentity, path: str, data: dict):
+    payload = json.dumps(data)
+    headers = identity.get_auth_headers(payload)
+    headers["Content-Type"] = "application/json"
+    return requests.post(f"{HUB_URL}{path}", data=payload, headers=headers)
+
+async def run_reputation_round(consumer: MEPIdentity, provider: MEPIdentity, rating: int):
+    async with websockets.connect(auth_ws_url(provider)) as ws:
+        submit_resp = signed_post(consumer, "/tasks/submit", {
+            "consumer_id": consumer.node_id,
+            "payload": f"Reputation calibration task {uuid.uuid4().hex[:6]}",
+            "bounty": 1.0,
+            "model_requirement": "python"
+        })
+        submit_resp.raise_for_status()
+        msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
+        data = json.loads(msg)
+        assert data["event"] == "rfc"
+        task_id = data["data"]["id"]
+
+        bid_resp = signed_post(provider, "/tasks/bid", {
+            "task_id": task_id,
+            "provider_id": provider.node_id
+        })
+        bid_resp.raise_for_status()
+        bid_data = bid_resp.json()
+        assert bid_data.get("status") == "accepted"
+
+        complete_resp = signed_post(provider, "/tasks/complete", {
+            "task_id": task_id,
+            "provider_id": provider.node_id,
+            "result_payload": "rated"
+        })
+        complete_resp.raise_for_status()
+
+        rating_resp = signed_post(consumer, "/reputation/submit", {
+            "task_id": task_id,
+            "provider_id": provider.node_id,
+            "rating": rating
+        })
+        rating_resp.raise_for_status()
+
 async def test_secret_data_delivery():
     provider = MEPIdentity(f"test_provider_{uuid.uuid4().hex[:6]}.pem")
     consumer = MEPIdentity(f"test_consumer_{uuid.uuid4().hex[:6]}.pem")
@@ -181,7 +223,73 @@ async def test_uri_offload():
         assert result_data.get("result_uri") == "https://example.com/huge-result.txt"
         assert result_data.get("result_payload") == ""
 
+async def test_reputation_weighted_risk_control():
+    provider_high = MEPIdentity(f"test_rep_high_{uuid.uuid4().hex[:6]}.pem")
+    provider_low = MEPIdentity(f"test_rep_low_{uuid.uuid4().hex[:6]}.pem")
+    provider_offline = MEPIdentity(f"test_rep_offline_{uuid.uuid4().hex[:6]}.pem")
+    consumer = MEPIdentity(f"test_rep_consumer_{uuid.uuid4().hex[:6]}.pem")
+    requests.post(f"{HUB_URL}/register", json={"pubkey": provider_high.pub_pem}).raise_for_status()
+    requests.post(f"{HUB_URL}/register", json={"pubkey": provider_low.pub_pem}).raise_for_status()
+    requests.post(f"{HUB_URL}/register", json={"pubkey": provider_offline.pub_pem}).raise_for_status()
+    requests.post(f"{HUB_URL}/register", json={"pubkey": consumer.pub_pem}).raise_for_status()
+
+    update_registry(provider_high, skills=["python"], models=["python"])
+    update_registry(provider_low, skills=["python"], models=["python"])
+    update_registry(provider_offline, skills=["python"], models=["python"])
+    signed_post(provider_offline, "/registry/availability", {"availability": "offline"}).raise_for_status()
+
+    for _ in range(3):
+        await run_reputation_round(consumer, provider_high, 5)
+    for _ in range(3):
+        await run_reputation_round(consumer, provider_low, 1)
+
+    async with websockets.connect(auth_ws_url(provider_high)) as ws_high, websockets.connect(auth_ws_url(provider_low)) as ws_low, websockets.connect(auth_ws_url(provider_offline)) as ws_offline:
+        submit_resp = signed_post(consumer, "/tasks/submit", {
+            "consumer_id": consumer.node_id,
+            "payload": "Phase 5 weighted assignment task",
+            "bounty": 1.0,
+            "model_requirement": "python"
+        })
+        submit_resp.raise_for_status()
+        task_id = submit_resp.json()["task_id"]
+
+        msg_high = await asyncio.wait_for(ws_high.recv(), timeout=2.0)
+        data_high = json.loads(msg_high)
+        assert data_high["event"] == "rfc"
+        assert data_high["data"]["id"] == task_id
+
+        try:
+            msg_low = await asyncio.wait_for(ws_low.recv(), timeout=1.0)
+            raise AssertionError(f"Low reputation provider should not receive RFC but got: {msg_low}")
+        except asyncio.TimeoutError:
+            pass
+
+        try:
+            msg_offline = await asyncio.wait_for(ws_offline.recv(), timeout=1.0)
+            raise AssertionError(f"Offline provider should not receive RFC but got: {msg_offline}")
+        except asyncio.TimeoutError:
+            pass
+
+        low_bid_resp = signed_post(provider_low, "/tasks/bid", {
+            "task_id": task_id,
+            "provider_id": provider_low.node_id
+        })
+        low_bid_resp.raise_for_status()
+        low_bid_data = low_bid_resp.json()
+        assert low_bid_data.get("status") == "rejected"
+        assert "risk control" in low_bid_data.get("detail", "")
+
+        high_bid_resp = signed_post(provider_high, "/tasks/bid", {
+            "task_id": task_id,
+            "provider_id": provider_high.node_id
+        })
+        high_bid_resp.raise_for_status()
+        high_bid_data = high_bid_resp.json()
+        assert high_bid_data.get("status") == "accepted"
+        assert high_bid_data.get("assignment_score") is not None
+
 if __name__ == '__main__':
     asyncio.run(test_secret_data_delivery())
     asyncio.run(test_capability_routing())
     asyncio.run(test_uri_offload())
+    asyncio.run(test_reputation_weighted_risk_control())
