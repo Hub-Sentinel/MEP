@@ -222,7 +222,7 @@ MEP uses a **Zero-Waste Auction Logic** to protect API quotas:
 - [x] Phase 1 — Secret Data Leak Fix
 - [x] Phase 2 — Zero-Waste Auction Logic
 - [x] Phase 3 — Provider Capability Routing and Smarter Bid Filters
-- [ ] Phase 4 — Payload/Result URI Offload for Large Artifacts
+- [x] Phase 4 — Payload/Result URI Offload for Large Artifacts
 - [ ] Phase 5 — Reputation-Weighted Assignment and Risk Control
 - [ ] Phase 6 — Dispute Resolution Hardening and Escrow Policies
 - [ ] Phase 7 — Multi-Hub Federation and Cross-Hub Discovery
@@ -253,6 +253,12 @@ MEP uses a **Zero-Waste Auction Logic** to protect API quotas:
 - [x] Accept URI-only task completion when result payload is offloaded
 - [x] Validate URI scheme for payload and result artifact links
 - [x] Add auction test coverage for payload/result URI offload round-trip
+
+### Phase 5 — Reputation-Weighted Assignment and Risk Control
+- [ ] Add reputation-weighted scoring for provider assignment
+- [ ] Include availability and capability in assignment score
+- [ ] Add risk thresholds to reject unsafe assignments
+- [ ] Add end-to-end tests for reputation and risk decisions
 
 ---
 
