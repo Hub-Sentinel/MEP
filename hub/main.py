@@ -38,6 +38,18 @@ ASSIGNMENT_SWEEP_INTERVAL_SECONDS = int(os.getenv("MEP_ASSIGNMENT_SWEEP_INTERVAL
 TIMEOUT_POLICY = os.getenv("MEP_TIMEOUT_POLICY", "refund").lower()
 VALID_AVAILABILITY = {"online", "idle", "busy", "offline", "unknown"}
 DEFAULT_REGISTRY_MAX_AGE_MINUTES = float(os.getenv("MEP_REGISTRY_MAX_AGE_MINUTES", "0") or "0")
+ASSIGNMENT_REPUTATION_WEIGHT = float(os.getenv("MEP_ASSIGNMENT_REPUTATION_WEIGHT", "0.55"))
+ASSIGNMENT_AVAILABILITY_WEIGHT = float(os.getenv("MEP_ASSIGNMENT_AVAILABILITY_WEIGHT", "0.25"))
+ASSIGNMENT_CAPABILITY_WEIGHT = float(os.getenv("MEP_ASSIGNMENT_CAPABILITY_WEIGHT", "0.20"))
+ASSIGNMENT_REPUTATION_CONFIDENCE_REVIEWS = int(os.getenv("MEP_ASSIGNMENT_REPUTATION_CONFIDENCE_REVIEWS", "10"))
+RISK_MIN_REPUTATION_SCORE = float(os.getenv("MEP_RISK_MIN_REPUTATION_SCORE", "2.5"))
+RISK_MIN_REPUTATION_REVIEWS = int(os.getenv("MEP_RISK_MIN_REPUTATION_REVIEWS", "3"))
+RISK_REJECT_AVAILABILITY = {
+    item.strip().lower()
+    for item in os.getenv("MEP_RISK_REJECT_AVAILABILITY", "offline").split(",")
+    if item.strip()
+}
+RFC_TOP_K = int(os.getenv("MEP_RFC_TOP_K", "0"))
 active_db_tasks = db.get_active_tasks()
 if REQUEUE_ASSIGNED_ON_START and active_db_tasks:
     now = time.time()
@@ -121,14 +133,73 @@ def _provider_matches_requirement(provider_id: str, model_requirement: Optional[
         return True
     return model_requirement in models or model_requirement in skills
 
+def _compute_provider_assignment_profile(provider_id: str, model_requirement: Optional[str]) -> dict:
+    model_requirement_normalized = _normalize_model_requirement(model_requirement)
+    registry = db.get_registry(provider_id) or {}
+    reputation = db.get_reputation(provider_id) or {}
+    models = [item.strip().lower() for item in registry.get("models", []) if isinstance(item, str)]
+    skills = [item.strip().lower() for item in registry.get("skills", []) if isinstance(item, str)]
+    availability = (registry.get("availability") or "unknown").strip().lower()
+    capability_match = _provider_matches_requirement(provider_id, model_requirement_normalized)
+    if not model_requirement_normalized:
+        capability_score = 1.0
+    elif model_requirement_normalized in models:
+        capability_score = 1.0
+    elif model_requirement_normalized in skills:
+        capability_score = 0.8
+    elif not models and not skills:
+        capability_score = 0.5
+    else:
+        capability_score = 0.0
+    availability_score_map = {
+        "online": 1.0,
+        "idle": 0.9,
+        "busy": 0.4,
+        "unknown": 0.3,
+        "offline": 0.0
+    }
+    availability_score = availability_score_map.get(availability, 0.2)
+    raw_score = float(reputation.get("score", 0.0) or 0.0)
+    raw_score = max(0.0, min(5.0, raw_score))
+    total_reviews = int(reputation.get("total_reviews", 0) or 0)
+    confidence_base = max(1, ASSIGNMENT_REPUTATION_CONFIDENCE_REVIEWS)
+    confidence = min(1.0, total_reviews / confidence_base)
+    reputation_score = (raw_score / 5.0) * confidence + 0.5 * (1.0 - confidence)
+    assignment_score = (
+        ASSIGNMENT_REPUTATION_WEIGHT * reputation_score
+        + ASSIGNMENT_AVAILABILITY_WEIGHT * availability_score
+        + ASSIGNMENT_CAPABILITY_WEIGHT * capability_score
+    )
+    risk_reasons: list[str] = []
+    if model_requirement_normalized and not capability_match:
+        risk_reasons.append("capability_mismatch")
+    if availability in RISK_REJECT_AVAILABILITY:
+        risk_reasons.append(f"availability_{availability}")
+    if total_reviews >= RISK_MIN_REPUTATION_REVIEWS and raw_score < RISK_MIN_REPUTATION_SCORE:
+        risk_reasons.append("low_reputation")
+    return {
+        "provider_id": provider_id,
+        "availability": availability,
+        "reputation_score": raw_score,
+        "total_reviews": total_reviews,
+        "capability_match": capability_match,
+        "assignment_score": assignment_score,
+        "risk_reasons": risk_reasons
+    }
+
 def _select_rfc_recipients(consumer_id: str, model_requirement: Optional[str], nodes: list[tuple[str, WebSocket]]) -> list[tuple[str, WebSocket]]:
-    selected: list[tuple[str, WebSocket]] = []
+    selected: list[tuple[str, WebSocket, float]] = []
     for node_id, ws in nodes:
         if node_id == consumer_id:
             continue
-        if _provider_matches_requirement(node_id, model_requirement):
-            selected.append((node_id, ws))
-    return selected
+        profile = _compute_provider_assignment_profile(node_id, model_requirement)
+        if profile["risk_reasons"]:
+            continue
+        selected.append((node_id, ws, float(profile["assignment_score"])))
+    selected.sort(key=lambda item: item[2], reverse=True)
+    if RFC_TOP_K > 0:
+        selected = selected[:RFC_TOP_K]
+    return [(node_id, ws) for node_id, ws, _ in selected]
 
 def _validate_timestamp(ts: str):
     try:
@@ -596,8 +667,10 @@ async def place_bid(bid: TaskBid, authenticated_node: str = Depends(verify_reque
         if task["status"] != "bidding":
             return {"status": "rejected", "detail": "Task already assigned to another node"}
         model_requirement = _normalize_model_requirement(task.get("model_requirement"))
-        if not _provider_matches_requirement(bid.provider_id, model_requirement):
-            return {"status": "rejected", "detail": f"Provider does not match model requirement '{model_requirement}'"}
+        assignment_profile = _compute_provider_assignment_profile(bid.provider_id, model_requirement)
+        if assignment_profile["risk_reasons"]:
+            risk_reasons = ", ".join(assignment_profile["risk_reasons"])
+            return {"status": "rejected", "detail": f"Provider rejected by risk control: {risk_reasons}"}
         if not db.assign_task_if_open(bid.task_id, bid.provider_id, time.time()):
             return {"status": "rejected", "detail": "Task already assigned to another node"}
         task["status"] = "assigned"
@@ -616,7 +689,8 @@ async def place_bid(bid: TaskBid, authenticated_node: str = Depends(verify_reque
         "consumer_id": consumer_id,
         "model_requirement": model_requirement,
         "payload_uri": payload_uri,
-        "secret_data": task.get("secret_data", task.get("result_payload"))
+        "secret_data": task.get("secret_data", task.get("result_payload")),
+        "assignment_score": assignment_profile["assignment_score"]
     }
 
 @app.post("/tasks/complete")
